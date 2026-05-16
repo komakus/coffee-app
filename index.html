@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>わたしのコーヒー帳</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            cream: '#f5f0e8',
+            coffee: { 50:'#faf6f0', 100:'#ede5d8', 200:'#d4c4b0', 400:'#a07850', 600:'#7c5c3e', 800:'#4a3020' },
+          },
+          fontFamily: { sans: ['"M PLUS Rounded 1c"', 'sans-serif'] },
+          keyframes: {
+            fadeIn:  { '0%':{ opacity:'0', transform:'translateY(8px)' }, '100%':{ opacity:'1', transform:'translateY(0)' } },
+            scaleIn: { '0%':{ opacity:'0', transform:'scale(0.95)' },    '100%':{ opacity:'1', transform:'scale(1)' } },
+            slideUp: { '0%':{ opacity:'0', transform:'translateY(40px)'},'100%':{ opacity:'1', transform:'translateY(0)' } },
+          },
+          animation: {
+            fadeIn:  'fadeIn 0.25s ease-out',
+            scaleIn: 'scaleIn 0.2s ease-out',
+            slideUp: 'slideUp 0.3s ease-out',
+          },
+        },
+      },
+    }
+  </script>
+  <style>
+    body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f5f0e8; color: #2c2c2c; }
+    .scrollbar-hide { -ms-overflow-style:none; scrollbar-width:none; }
+    .scrollbar-hide::-webkit-scrollbar { display:none; }
+    input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.5; }
+  </style>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, useCallback } = React
+
+// ── PIN認証 ───────────────────────────────────────────────────
+const PIN_HASH    = 'fdd786c4bb54810ca1e7edf1538dec73a46a7682f141a8bc5278b4fb0ec76360'
+const SESSION_KEY = 'coffee-log-session'
+const SESSION_TTL = 24 * 60 * 60 * 1000
+const MAX_FAILS   = 5
+const LOCKOUT_MS  = 30 * 1000
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('')
+}
+function isSessionValid() {
+  try { const e = localStorage.getItem(SESSION_KEY); return e && Date.now() < Number(e) }
+  catch { return false }
+}
+
+// ── LocalStorage Hook ──────────────────────────────────────────
+function useLocalStorage(key, initial) {
+  const [val, setVal] = useState(() => {
+    try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial }
+    catch { return initial }
+  })
+  const set = useCallback(v => {
+    setVal(prev => {
+      const next = typeof v === 'function' ? v(prev) : v
+      try { localStorage.setItem(key, JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [key])
+  return [val, set]
+}
+
+// ── 定数 ──────────────────────────────────────────────────────
+const ROAST_METHODS = ['ナチュラル','ウォッシュド','ハニー','アナエロビック','ウェットハル']
+const BREW_METHODS  = ['ドリップ','エスプレッソ','フレンチプレス','エアロプレス','モカポット','コールドブリュー','その他']
+const FLAVOR_TAGS   = [
+  'ブルーベリー','ストロベリー','ラズベリー','カシス',
+  'レモン','オレンジ','アプリコット','ピーチ','マンゴー','トロピカル',
+  'ダークチョコ','ミルクチョコ','カカオ',
+  'アーモンド','ヘーゼルナッツ',
+  'ジャスミン','ローズ','フローラル',
+  'キャラメル','バニラ','はちみつ','ブラウンシュガー','スパイス',
+]
+
+const todayStr = () => new Date().toISOString().slice(0, 10)
+const formatDate = s => {
+  const d = new Date(s + 'T00:00:00')
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`
+}
+
+// ── サンプルデータ ────────────────────────────────────────────
+const SAMPLE_LOGS = [
+  { id:'s1', date:'2026-05-10', shopName:'About Life Coffee Brewers', shopInstagram:'https://www.instagram.com/aboutlifecoffee/', rating:5, beanCountry:'エチオピア', roastMethod:'ナチュラル', flavorNotes:['ブルーベリー','ジャスミン','はちみつ'], farm:'Yirgacheffe', brewMethod:'ドリップ', comment:'フローラルで甘い。最高の一杯。', createdAt:Date.now()-3*86400000 },
+  { id:'s2', date:'2026-05-07', shopName:'Fuglen Tokyo', shopInstagram:'https://www.instagram.com/fuglentokyo/', rating:4, beanCountry:'コロンビア', roastMethod:'ウォッシュド', flavorNotes:['アプリコット','キャラメル'], farm:'', brewMethod:'エスプレッソ', comment:'すっきりして飲みやすい。', createdAt:Date.now()-6*86400000 },
+  { id:'s3', date:'2026-05-01', shopName:'The Roastery by Nozy Coffee', shopInstagram:'https://www.instagram.com/nozycoffee/', rating:4, beanCountry:'グアテマラ', roastMethod:'ウォッシュド', flavorNotes:['ダークチョコ','ヘーゼルナッツ'], farm:'La Hermosa', brewMethod:'ドリップ', comment:'チョコレート感が強くて好み。', createdAt:Date.now()-12*86400000 },
+]
+const SAMPLE_SHOPS = [
+  { name:'About Life Coffee Brewers', instagram:'https://www.instagram.com/aboutlifecoffee/' },
+  { name:'Fuglen Tokyo',              instagram:'https://www.instagram.com/fuglentokyo/' },
+  { name:'The Roastery by Nozy Coffee', instagram:'https://www.instagram.com/nozycoffee/' },
+]
+
+// ── SVG Icons ─────────────────────────────────────────────────
+const ICONS = {
+  coffee:  'M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8zM6 1v3M10 1v3M14 1v3',
+  search:  'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
+  plus:    'M12 5v14M5 12h14',
+  x:       'M18 6L6 18M6 6l12 12',
+  chevron: 'M19 9l-7 7-7-7',
+  link:    'M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71',
+  edit:    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  trash:   'M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16',
+  back:    'M19 12H5M12 19l-7-7 7-7',
+}
+
+function Icon({ d, size=20, className='', strokeWidth=2 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+      className={className}>
+      {d.split('M').filter(Boolean).map((p, i) => <path key={i} d={'M'+p} />)}
+    </svg>
+  )
+}
+
+// ── 星評価 ────────────────────────────────────────────────────
+function StarRating({ value, onChange, size=28, readonly=false }) {
+  const [hover, setHover] = useState(0)
+  return (
+    <div className="flex gap-1">
+      {[1,2,3,4,5].map(n => (
+        <button key={n} type="button"
+          onClick={() => !readonly && onChange?.(n)}
+          onMouseEnter={() => !readonly && setHover(n)}
+          onMouseLeave={() => !readonly && setHover(0)}
+          className={`transition-transform ${!readonly ? 'hover:scale-110 active:scale-95' : 'cursor-default'}`}>
+          <svg width={size} height={size} viewBox="0 0 24 24"
+            fill={(hover||value)>=n ? '#c09a6e' : 'none'}
+            stroke={(hover||value)>=n ? '#c09a6e' : '#d4c4b0'}
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+          </svg>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ── PinScreen ─────────────────────────────────────────────────
+function PinScreen({ onUnlock }) {
+  const [pin, setPin]       = useState('')
+  const pinRef              = useRef('')
+  const [error, setError]   = useState('')
+  const [shake, setShake]   = useState(false)
+  const [fails, setFails]   = useState(() => { try { return Number(localStorage.getItem('coffee-pin-fails')||0) } catch { return 0 } })
+  const [lockUntil, setLockUntil] = useState(() => { try { return Number(localStorage.getItem('coffee-pin-lock')||0) } catch { return 0 } })
+  const [lockLeft, setLockLeft]   = useState(0)
+
+  useEffect(() => {
+    if (!lockUntil) return
+    const t = setInterval(() => {
+      const left = Math.ceil((lockUntil - Date.now()) / 1000)
+      if (left <= 0) { setLockLeft(0); setLockUntil(0); localStorage.removeItem('coffee-pin-lock'); localStorage.removeItem('coffee-pin-fails'); setFails(0) }
+      else setLockLeft(left)
+    }, 500)
+    return () => clearInterval(t)
+  }, [lockUntil])
+
+  const shake_ = msg => { setError(msg); setShake(true); pinRef.current=''; setPin(''); setTimeout(()=>setShake(false),500) }
+
+  const handleDigit = useCallback(async d => {
+    if (lockUntil > Date.now()) return
+    const next = pinRef.current + d
+    if (next.length > 4) return
+    pinRef.current = next; setPin(next); setError('')
+    if (next.length < 4) return
+    const hash = await sha256(next)
+    if (hash === PIN_HASH) {
+      localStorage.removeItem('coffee-pin-fails'); localStorage.removeItem('coffee-pin-lock')
+      localStorage.setItem(SESSION_KEY, String(Date.now()+SESSION_TTL))
+      onUnlock()
+    } else {
+      const f = fails+1; setFails(f); localStorage.setItem('coffee-pin-fails', String(f))
+      if (f >= MAX_FAILS) { const u=Date.now()+LOCKOUT_MS; setLockUntil(u); localStorage.setItem('coffee-pin-lock',String(u)); shake_(`${MAX_FAILS}回連続ミス。30秒後に再試行できます`) }
+      else shake_(`PINが違います（残り${MAX_FAILS-f}回）`)
+    }
+  }, [fails, lockUntil, onUnlock])
+
+  const handleDel = () => { const n=pinRef.current.slice(0,-1); pinRef.current=n; setPin(n); setError('') }
+  const isLocked = lockUntil > Date.now()
+  const dots = Array.from({length:4},(_,i)=>i<pin.length)
+
+  return (
+    <div className="min-h-screen bg-cream flex flex-col items-center justify-center px-6">
+      <div className="w-full max-w-xs flex flex-col items-center gap-8 animate-fadeIn">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center shadow-md" style={{backgroundColor:'#7c5c3e'}}>
+            <Icon d={ICONS.coffee} size={26} className="text-white" />
+          </div>
+          <div className="text-center">
+            <p className="font-bold text-xl" style={{color:'#4a3020'}}>PINを入力</p>
+            <p className="text-sm text-gray-400 mt-1">わたしのコーヒー帳</p>
+          </div>
+        </div>
+
+        <div className="flex gap-4" style={shake ? {animation:'shake 0.4s ease'} : {}}>
+          {dots.map((f,i) => (
+            <div key={i} className="w-4 h-4 rounded-full border-2 transition-all duration-150"
+              style={f ? {backgroundColor:'#a07850',borderColor:'#a07850'} : {borderColor:'#d4c4b0'}} />
+          ))}
+        </div>
+
+        {error && <p className="text-red-500 text-sm text-center -mt-4">{error}</p>}
+        {isLocked && lockLeft>0 && <p className="text-red-400 text-sm text-center -mt-4">{lockLeft}秒後に再試行できます</p>}
+
+        <div className="grid grid-cols-3 gap-3 w-full">
+          {[1,2,3,4,5,6,7,8,9,'',0,'⌫'].map((k,i) => {
+            if (k==='') return <div key={i} />
+            const isDel = k==='⌫'
+            return (
+              <button key={i} onClick={()=>isDel?handleDel():handleDigit(String(k))}
+                disabled={isLocked && !isDel}
+                className={`h-16 rounded-2xl text-xl font-medium transition-all duration-150 active:scale-95 ${isDel?'bg-transparent text-gray-400 hover:text-gray-700':'bg-white shadow-sm disabled:opacity-30'}`}
+                style={isDel?{}:{border:'1px solid #d4c4b0',color:'#2c2c2c'}}>
+                {k}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}`}</style>
+    </div>
+  )
+}
+
+// ── LogCard ───────────────────────────────────────────────────
+function LogCard({ log, onClick }) {
+  return (
+    <div onClick={()=>onClick(log)}
+      className="bg-white rounded-2xl p-4 cursor-pointer hover:shadow-md transition-all duration-200 animate-fadeIn"
+      style={{border:'1px solid #ede5d8', boxShadow:'0 1px 4px rgba(0,0,0,0.06)'}}>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex-1 min-w-0">
+          <p className="font-bold text-base truncate" style={{color:'#4a3020'}}>{log.shopName}</p>
+          <p className="text-xs text-gray-400 mt-0.5">{formatDate(log.date)}</p>
+        </div>
+        <StarRating value={log.rating} size={16} readonly />
+      </div>
+
+      {(log.beanCountry || log.roastMethod || log.brewMethod) && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {log.beanCountry && <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{backgroundColor:'#f5ece0',color:'#7c5c3e'}}>🌍 {log.beanCountry}</span>}
+          {log.roastMethod && <span className="text-xs px-2 py-0.5 rounded-full" style={{backgroundColor:'#ede5d8',color:'#6b4c30'}}>{log.roastMethod}</span>}
+          {log.brewMethod  && <span className="text-xs px-2 py-0.5 rounded-full" style={{backgroundColor:'#ede5d8',color:'#6b4c30'}}>{log.brewMethod}</span>}
+        </div>
+      )}
+
+      {log.flavorNotes?.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {log.flavorNotes.slice(0,4).map(f=>(
+            <span key={f} className="text-xs px-2 py-0.5 rounded-full" style={{backgroundColor:'#e8ddd0',color:'#8a6040'}}>{f}</span>
+          ))}
+          {log.flavorNotes.length>4 && <span className="text-xs text-gray-400 self-center">+{log.flavorNotes.length-4}</span>}
+        </div>
+      )}
+
+      {log.comment && (
+        <p className="text-sm text-gray-500 leading-relaxed"
+          style={{overflow:'hidden',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+          {log.comment}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ── DetailModal ───────────────────────────────────────────────
+function DetailModal({ log, onClose, onEdit, onDelete }) {
+  if (!log) return null
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{backgroundColor:'rgba(0,0,0,0.45)'}}>
+      <div className="flex-1" onClick={onClose} />
+      <div className="bg-white rounded-t-3xl max-h-[88vh] flex flex-col animate-slideUp">
+        {/* header */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0" style={{borderBottom:'1px solid #ede5d8'}}>
+          <button onClick={onClose} className="p-2 -ml-2 rounded-full transition-colors hover:bg-coffee-100" style={{color:'#7c5c3e'}}>
+            <Icon d={ICONS.back} size={20} />
+          </button>
+          <div className="flex gap-1">
+            <button onClick={()=>onEdit(log)} className="p-2 rounded-full transition-colors hover:bg-coffee-100" style={{color:'#7c5c3e'}}>
+              <Icon d={ICONS.edit} size={20} />
+            </button>
+            <button onClick={()=>onDelete(log.id)} className="p-2 rounded-full transition-colors hover:bg-red-50 text-red-400">
+              <Icon d={ICONS.trash} size={20} />
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto scrollbar-hide px-5 py-5 space-y-5 flex-1">
+          {/* Shop & date */}
+          <div>
+            <h2 className="text-2xl font-bold leading-tight" style={{color:'#4a3020'}}>{log.shopName}</h2>
+            <p className="text-sm text-gray-400 mt-1">{formatDate(log.date)}</p>
+            {log.shopInstagram && (
+              <a href={log.shopInstagram} target="_blank" rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium transition-opacity hover:opacity-70"
+                style={{color:'#7c5c3e'}}>
+                <Icon d={ICONS.link} size={14} />
+                Instagram
+              </a>
+            )}
+          </div>
+
+          {/* Rating */}
+          <div>
+            <p className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">評価</p>
+            <StarRating value={log.rating} size={30} readonly />
+          </div>
+
+          {/* Bean details */}
+          {(log.beanCountry || log.roastMethod || log.farm || log.brewMethod) && (
+            <div className="rounded-2xl p-4 space-y-2.5" style={{backgroundColor:'#faf6f0'}}>
+              {[
+                ['産地', log.beanCountry],
+                ['農園・地域', log.farm],
+                ['精製方法', log.roastMethod],
+                ['抽出方法', log.brewMethod],
+              ].filter(([,v])=>v).map(([label,val])=>(
+                <div key={label} className="flex gap-3 text-sm">
+                  <span className="text-gray-400 shrink-0 w-20">{label}</span>
+                  <span className="font-medium" style={{color:'#4a3020'}}>{val}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Flavors */}
+          {log.flavorNotes?.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2.5 uppercase tracking-wide">フレーバー</p>
+              <div className="flex flex-wrap gap-2">
+                {log.flavorNotes.map(f=>(
+                  <span key={f} className="text-sm px-3 py-1 rounded-full font-medium" style={{backgroundColor:'#e8ddd0',color:'#6b4226'}}>{f}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Comment */}
+          {log.comment && (
+            <div>
+              <p className="text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">コメント</p>
+              <p className="text-sm leading-relaxed text-gray-700 whitespace-pre-wrap">{log.comment}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── AddModal ──────────────────────────────────────────────────
+function AddModal({ shops, onSave, onClose, editLog }) {
+  const isEdit = !!editLog
+  const [date,        setDate]        = useState(editLog?.date || todayStr())
+  const [shopName,    setShopName]    = useState(editLog?.shopName || '')
+  const [shopInsta,   setShopInsta]   = useState(editLog?.shopInstagram || '')
+  const [rating,      setRating]      = useState(editLog?.rating || 0)
+  const [country,     setCountry]     = useState(editLog?.beanCountry || '')
+  const [roast,       setRoast]       = useState(editLog?.roastMethod || '')
+  const [flavors,     setFlavors]     = useState(editLog?.flavorNotes || [])
+  const [customFlav,  setCustomFlav]  = useState('')
+  const [farm,        setFarm]        = useState(editLog?.farm || '')
+  const [brew,        setBrew]        = useState(editLog?.brewMethod || '')
+  const [comment,     setComment]     = useState(editLog?.comment || '')
+  const [showDetails, setShowDetails] = useState(
+    isEdit && !!(editLog?.beanCountry || editLog?.roastMethod || editLog?.farm || editLog?.brewMethod || editLog?.flavorNotes?.length)
+  )
+  const [suggestions, setSuggestions] = useState([])
+  const [showSug,     setShowSug]     = useState(false)
+
+  const handleShopInput = v => {
+    setShopName(v)
+    const matches = v ? shops.filter(s => s.name.toLowerCase().includes(v.toLowerCase())) : []
+    setSuggestions(matches); setShowSug(matches.length > 0)
+  }
+  const pickShop = s => { setShopName(s.name); setShopInsta(s.instagram||''); setShowSug(false) }
+
+  const toggleFlavor = f => setFlavors(p => p.includes(f) ? p.filter(x=>x!==f) : [...p,f])
+  const addCustom = () => {
+    const v = customFlav.trim()
+    if (v && !flavors.includes(v)) { setFlavors(p=>[...p,v]); setCustomFlav('') }
+  }
+
+  const canSave = shopName.trim() && rating > 0
+  const handleSave = () => {
+    if (!canSave) return
+    onSave({
+      id:            editLog?.id || String(Date.now()),
+      date,
+      shopName:      shopName.trim(),
+      shopInstagram: shopInsta.trim(),
+      rating,
+      beanCountry:   country.trim(),
+      roastMethod:   roast,
+      flavorNotes:   flavors,
+      farm:          farm.trim(),
+      brewMethod:    brew,
+      comment:       comment.trim(),
+      createdAt:     editLog?.createdAt || Date.now(),
+    }, { name: shopName.trim(), instagram: shopInsta.trim() })
+  }
+
+  const btn = (active) => ({
+    padding:'6px 14px', borderRadius:'999px', fontSize:'14px', fontWeight:'500',
+    backgroundColor: active ? '#a07850' : '#ede5d8',
+    color: active ? 'white' : '#555',
+    transition:'all 0.15s',
+  })
+  const input = { border:'1px solid #d4c4b0', backgroundColor:'white', borderRadius:'12px', padding:'10px 14px', fontSize:'14px', width:'100%', outline:'none' }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{backgroundColor:'rgba(0,0,0,0.45)'}}>
+      <div className="flex-1" onClick={onClose} />
+      <div className="bg-white rounded-t-3xl max-h-[92vh] flex flex-col animate-slideUp">
+        {/* header */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 shrink-0" style={{borderBottom:'1px solid #ede5d8'}}>
+          <h2 className="font-bold text-lg" style={{color:'#4a3020'}}>{isEdit?'記録を編集':'コーヒーを記録'}</h2>
+          <button onClick={onClose} className="p-1 rounded-full transition-colors hover:bg-coffee-100" style={{color:'#7c5c3e'}}>
+            <Icon d={ICONS.x} size={22} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto scrollbar-hide px-5 py-4 flex-1 space-y-5">
+
+          {/* Date */}
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wide">日付</label>
+            <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{...input,backgroundColor:'#faf6f0'}} />
+          </div>
+
+          {/* Shop name + autocomplete */}
+          <div className="relative">
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wide">お店の名前 <span className="text-red-400">*</span></label>
+            <input type="text" value={shopName}
+              onChange={e=>handleShopInput(e.target.value)}
+              onBlur={()=>setTimeout(()=>setShowSug(false),150)}
+              placeholder="例：About Life Coffee Brewers"
+              style={{...input,backgroundColor:'#faf6f0'}} />
+            {showSug && (
+              <div className="absolute top-full left-0 right-0 bg-white rounded-xl shadow-lg z-10 overflow-hidden mt-1" style={{border:'1px solid #d4c4b0'}}>
+                {suggestions.map((s,i)=>(
+                  <button key={i} onMouseDown={()=>pickShop(s)}
+                    className="w-full text-left px-4 py-3 text-sm transition-colors hover:bg-coffee-50"
+                    style={{borderBottom:i<suggestions.length-1?'1px solid #ede5d8':'none',color:'#4a3020'}}>
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Instagram */}
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wide">Instagram リンク（任意）</label>
+            <input type="url" value={shopInsta} onChange={e=>setShopInsta(e.target.value)}
+              placeholder="https://www.instagram.com/..."
+              style={{...input,backgroundColor:'#faf6f0'}} />
+          </div>
+
+          {/* Rating */}
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wide">評価 <span className="text-red-400">*</span></label>
+            <StarRating value={rating} onChange={setRating} size={38} />
+            {rating===0 && <p className="text-xs text-gray-400 mt-1">タップして評価してください</p>}
+          </div>
+
+          {/* Details toggle */}
+          <button onClick={()=>setShowDetails(v=>!v)}
+            className="flex items-center gap-2 w-full py-3 px-4 rounded-xl text-sm font-medium transition-colors"
+            style={{backgroundColor:'#f5ece0',color:'#7c5c3e'}}>
+            <span className="flex-1 text-left">豆の詳細（任意）</span>
+            <span style={{transition:'transform 0.2s',transform:showDetails?'rotate(180deg)':'none'}}>
+              <Icon d={ICONS.chevron} size={16} />
+            </span>
+          </button>
+
+          {showDetails && (
+            <div className="space-y-4 rounded-2xl p-4 -mt-2" style={{backgroundColor:'#faf6f0'}}>
+
+              {/* Country */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">産地（国）</label>
+                <input type="text" value={country} onChange={e=>setCountry(e.target.value)}
+                  placeholder="例：エチオピア、コロンビア" style={input} />
+              </div>
+
+              {/* Farm */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">農園・地域</label>
+                <input type="text" value={farm} onChange={e=>setFarm(e.target.value)}
+                  placeholder="例：Yirgacheffe、La Hermosa" style={input} />
+              </div>
+
+              {/* Roast method */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-2">精製方法</label>
+                <div className="flex flex-wrap gap-2">
+                  {ROAST_METHODS.map(m=>(
+                    <button key={m} type="button" onClick={()=>setRoast(r=>r===m?'':m)}
+                      style={btn(roast===m)}>{m}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Brew method */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-2">抽出方法</label>
+                <div className="flex flex-wrap gap-2">
+                  {BREW_METHODS.map(m=>(
+                    <button key={m} type="button" onClick={()=>setBrew(b=>b===m?'':m)}
+                      style={btn(brew===m)}>{m}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Flavor tags */}
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-2">フレーバー（複数選択可）</label>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {FLAVOR_TAGS.map(f=>(
+                    <button key={f} type="button" onClick={()=>toggleFlavor(f)} style={btn(flavors.includes(f))}>{f}</button>
+                  ))}
+                </div>
+                {/* custom flavor */}
+                <div className="flex gap-2">
+                  <input type="text" value={customFlav} onChange={e=>setCustomFlav(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addCustom()}}}
+                    placeholder="その他を追加…"
+                    style={{...input,flex:1}} />
+                  <button type="button" onClick={addCustom}
+                    className="px-4 rounded-xl text-sm font-medium text-white shrink-0"
+                    style={{backgroundColor:'#a07850'}}>追加</button>
+                </div>
+                {/* custom chips */}
+                {flavors.filter(f=>!FLAVOR_TAGS.includes(f)).length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {flavors.filter(f=>!FLAVOR_TAGS.includes(f)).map(f=>(
+                      <button key={f} type="button" onClick={()=>toggleFlavor(f)}
+                        className="flex items-center gap-1 text-sm px-3 py-1 rounded-full text-white"
+                        style={{backgroundColor:'#a07850'}}>
+                        {f}<span className="text-xs opacity-70 ml-0.5">✕</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Comment */}
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1.5 uppercase tracking-wide">コメント（任意）</label>
+            <textarea value={comment} onChange={e=>setComment(e.target.value)}
+              placeholder="味の感想、印象、次また頼みたいかなど…"
+              rows={3}
+              style={{...input,resize:'none',lineHeight:'1.6',backgroundColor:'#faf6f0'}} />
+          </div>
+        </div>
+
+        {/* Save */}
+        <div className="px-5 py-4 shrink-0" style={{borderTop:'1px solid #ede5d8'}}>
+          <button onClick={handleSave} disabled={!canSave}
+            className="w-full py-4 rounded-2xl font-bold text-base text-white transition-all active:scale-95"
+            style={{backgroundColor: canSave ? '#7c5c3e' : '#c4b0a0', cursor: canSave?'pointer':'not-allowed'}}>
+            {isEdit ? '変更を保存' : '記録する ☕'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── App ───────────────────────────────────────────────────────
+function App() {
+  const [logs,  setLogs]  = useLocalStorage('coffee-logs',  SAMPLE_LOGS)
+  const [shops, setShops] = useLocalStorage('coffee-shops', SAMPLE_SHOPS)
+  const [query,        setQuery]        = useState('')
+  const [ratingFilter, setRatingFilter] = useState(0)
+  const [showAdd,  setShowAdd]  = useState(false)
+  const [detailLog, setDetailLog] = useState(null)
+  const [editLog,   setEditLog]   = useState(null)
+
+  const filtered = useMemo(() => {
+    return logs
+      .filter(l => {
+        const q = query.toLowerCase()
+        const matchQ = !q ||
+          l.shopName.toLowerCase().includes(q) ||
+          (l.beanCountry||'').toLowerCase().includes(q) ||
+          (l.flavorNotes||[]).some(f=>f.toLowerCase().includes(q)) ||
+          (l.comment||'').toLowerCase().includes(q)
+        return matchQ && (ratingFilter === 0 || l.rating >= ratingFilter)
+      })
+      .sort((a,b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)
+  }, [logs, query, ratingFilter])
+
+  const handleSave = (log, shop) => {
+    setLogs(prev => prev.find(l=>l.id===log.id) ? prev.map(l=>l.id===log.id?log:l) : [log,...prev])
+    if (shop.name) setShops(prev => {
+      const i = prev.findIndex(s=>s.name===shop.name)
+      return i>=0 ? prev.map((s,j)=>j===i?shop:s) : [...prev,shop]
+    })
+    setShowAdd(false); setEditLog(null)
+  }
+  const handleDelete = id => {
+    if (!confirm('この記録を削除しますか？')) return
+    setLogs(prev=>prev.filter(l=>l.id!==id)); setDetailLog(null)
+  }
+  const handleEdit = log => { setDetailLog(null); setEditLog(log); setShowAdd(true) }
+
+  const totalCount = logs.length
+  const avgRating  = logs.length ? (logs.reduce((s,l)=>s+l.rating,0)/logs.length).toFixed(1) : '-'
+  const shopCount  = new Set(logs.map(l=>l.shopName)).size
+
+  return (
+    <div className="min-h-screen" style={{backgroundColor:'#f5f0e8'}}>
+      {/* Header */}
+      <div className="sticky top-0 z-30 px-4 pt-5 pb-3" style={{backgroundColor:'#f5f0e8'}}>
+        <div className="flex items-end justify-between mb-3">
+          <div>
+            <h1 className="text-xl font-bold" style={{color:'#4a3020'}}>☕ わたしのコーヒー帳</h1>
+            <p className="text-xs text-gray-400 mt-0.5">{totalCount}杯 · {shopCount}店舗 · 平均 ⭐ {avgRating}</p>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="relative mb-2">
+          <Icon d={ICONS.search} size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <input type="text" value={query} onChange={e=>setQuery(e.target.value)}
+            placeholder="お店・産地・フレーバーで検索…"
+            className="w-full text-sm focus:outline-none"
+            style={{paddingLeft:'36px',paddingRight:query?'32px':'14px',paddingTop:'10px',paddingBottom:'10px',borderRadius:'12px',border:'1px solid #d4c4b0',backgroundColor:'white'}} />
+          {query && (
+            <button onClick={()=>setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <Icon d={ICONS.x} size={14} />
+            </button>
+          )}
+        </div>
+
+        {/* Rating filter */}
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-0.5">
+          {[{label:'すべて',val:0},{label:'⭐ 5',val:5},{label:'⭐ 4以上',val:4},{label:'⭐ 3以上',val:3}].map(f=>(
+            <button key={f.val} onClick={()=>setRatingFilter(f.val)}
+              className="whitespace-nowrap text-xs font-medium px-3 py-1.5 rounded-full transition-all shrink-0"
+              style={ratingFilter===f.val?{backgroundColor:'#7c5c3e',color:'white'}:{backgroundColor:'#ede5d8',color:'#555'}}>
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* List */}
+      <div className="px-4 pb-28 space-y-3">
+        {filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-24 text-gray-400 text-center">
+            <span className="text-5xl mb-4">☕</span>
+            <p className="text-sm">{query||ratingFilter?'該当する記録がありません':'まだ記録がありません'}</p>
+            {!query && !ratingFilter && <p className="text-xs mt-1.5">右下のボタンからコーヒーを記録しましょう</p>}
+          </div>
+        ) : (
+          filtered.map(log=><LogCard key={log.id} log={log} onClick={setDetailLog} />)
+        )}
+      </div>
+
+      {/* FAB */}
+      <button onClick={()=>{setEditLog(null);setShowAdd(true)}}
+        className="fixed bottom-6 right-5 w-14 h-14 rounded-full text-white flex items-center justify-center transition-transform active:scale-90 z-30"
+        style={{backgroundColor:'#7c5c3e',boxShadow:'0 4px 16px rgba(124,92,62,0.45)'}}>
+        <Icon d={ICONS.plus} size={26} />
+      </button>
+
+      {showAdd && <AddModal shops={shops} onSave={handleSave} onClose={()=>{setShowAdd(false);setEditLog(null)}} editLog={editLog} />}
+      {detailLog && <DetailModal log={detailLog} onClose={()=>setDetailLog(null)} onEdit={handleEdit} onDelete={handleDelete} />}
+    </div>
+  )
+}
+
+// ── Root ──────────────────────────────────────────────────────
+function Root() {
+  const [unlocked, setUnlocked] = useState(isSessionValid)
+  if (!unlocked) return <PinScreen onUnlock={()=>setUnlocked(true)} />
+  return <App />
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root />)
+</script>
+</body>
+</html>

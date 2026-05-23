@@ -80,8 +80,7 @@ function useLocalStorage(key, initial) {
 }
 
 // ── 定数 ──────────────────────────────────────────────────────
-const ROAST_METHODS = ['ナチュラル','ウォッシュド','ハニー','アナエロビック','ウェットハル']
-const BREW_METHODS  = ['ドリップ','エスプレッソ','フレンチプレス','エアロプレス','モカポット','コールドブリュー','その他']
+const DEFAULT_ROAST_METHODS = ['ナチュラル','ウォッシュド','ハニー','アナエロビック','ウェットハル']
 const FLAVOR_TAGS   = [
   'ブルーベリー','ストロベリー','ラズベリー','カシス',
   'レモン','オレンジ','アプリコット','ピーチ','マンゴー','トロピカル',
@@ -99,9 +98,9 @@ const formatDate = s => {
 
 // ── サンプルデータ ────────────────────────────────────────────
 const SAMPLE_LOGS = [
-  { id:'s1', date:'2026-05-10', shopName:'About Life Coffee Brewers', shopInstagram:'https://www.instagram.com/aboutlifecoffee/', rating:5, beanCountry:'エチオピア', roastMethod:'ナチュラル', flavorNotes:['ブルーベリー','ジャスミン','はちみつ'], farm:'Yirgacheffe', brewMethod:'ドリップ', comment:'フローラルで甘い。最高の一杯。', createdAt:Date.now()-3*86400000 },
-  { id:'s2', date:'2026-05-07', shopName:'Fuglen Tokyo', shopInstagram:'https://www.instagram.com/fuglentokyo/', rating:4, beanCountry:'コロンビア', roastMethod:'ウォッシュド', flavorNotes:['アプリコット','キャラメル'], farm:'', brewMethod:'エスプレッソ', comment:'すっきりして飲みやすい。', createdAt:Date.now()-6*86400000 },
-  { id:'s3', date:'2026-05-01', shopName:'The Roastery by Nozy Coffee', shopInstagram:'https://www.instagram.com/nozycoffee/', rating:4, beanCountry:'グアテマラ', roastMethod:'ウォッシュド', flavorNotes:['ダークチョコ','ヘーゼルナッツ'], farm:'La Hermosa', brewMethod:'ドリップ', comment:'チョコレート感が強くて好み。', createdAt:Date.now()-12*86400000 },
+  { id:'s1', date:'2026-05-10', shopName:'About Life Coffee Brewers', shopInstagram:'https://www.instagram.com/aboutlifecoffee/', rating:5, beanCountry:'エチオピア', roastMethod:'ナチュラル', flavorNotes:['ブルーベリー','ジャスミン','はちみつ'], farm:'Yirgacheffe', comment:'フローラルで甘い。最高の一杯。', createdAt:Date.now()-3*86400000 },
+  { id:'s2', date:'2026-05-07', shopName:'Fuglen Tokyo', shopInstagram:'https://www.instagram.com/fuglentokyo/', rating:4, beanCountry:'コロンビア', roastMethod:'ウォッシュド', flavorNotes:['アプリコット','キャラメル'], farm:'', comment:'すっきりして飲みやすい。', createdAt:Date.now()-6*86400000 },
+  { id:'s3', date:'2026-05-01', shopName:'The Roastery by Nozy Coffee', shopInstagram:'https://www.instagram.com/nozycoffee/', rating:4, beanCountry:'グアテマラ', roastMethod:'ウォッシュド', flavorNotes:['ダークチョコ','ヘーゼルナッツ'], farm:'La Hermosa', comment:'チョコレート感が強くて好み。', createdAt:Date.now()-12*86400000 },
 ]
 const SAMPLE_SHOPS = [
   { name:'About Life Coffee Brewers', instagram:'https://www.instagram.com/aboutlifecoffee/' },
@@ -256,11 +255,10 @@ function LogCard({ log, onClick }) {
         <StarRating value={log.rating} size={16} readonly />
       </div>
 
-      {(log.beanCountry || log.roastMethod || log.brewMethod) && (
+      {(log.beanCountry || log.roastMethod) && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {log.beanCountry && <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{backgroundColor:'#f5ece0',color:'#7c5c3e'}}>🌍 {log.beanCountry}</span>}
           {log.roastMethod && <span className="text-xs px-2 py-0.5 rounded-full" style={{backgroundColor:'#ede5d8',color:'#6b4c30'}}>{log.roastMethod}</span>}
-          {log.brewMethod  && <span className="text-xs px-2 py-0.5 rounded-full" style={{backgroundColor:'#ede5d8',color:'#6b4c30'}}>{log.brewMethod}</span>}
         </div>
       )}
 
@@ -327,13 +325,12 @@ function DetailModal({ log, onClose, onEdit, onDelete }) {
           </div>
 
           {/* Bean details */}
-          {(log.beanCountry || log.roastMethod || log.farm || log.brewMethod) && (
+          {(log.beanCountry || log.roastMethod || log.farm) && (
             <div className="rounded-2xl p-4 space-y-2.5" style={{backgroundColor:'#faf6f0'}}>
               {[
                 ['産地', log.beanCountry],
                 ['農園・地域', log.farm],
                 ['精製方法', log.roastMethod],
-                ['抽出方法', log.brewMethod],
               ].filter(([,v])=>v).map(([label,val])=>(
                 <div key={label} className="flex gap-3 text-sm">
                   <span className="text-gray-400 shrink-0 w-20">{label}</span>
@@ -369,7 +366,7 @@ function DetailModal({ log, onClose, onEdit, onDelete }) {
 }
 
 // ── AddModal ──────────────────────────────────────────────────
-function AddModal({ shops, onSave, onClose, editLog }) {
+function AddModal({ shops, customRoasts, onSave, onAddRoast, onClose, editLog }) {
   const isEdit = !!editLog
   const [date,        setDate]        = useState(editLog?.date || todayStr())
   const [shopName,    setShopName]    = useState(editLog?.shopName || '')
@@ -377,14 +374,15 @@ function AddModal({ shops, onSave, onClose, editLog }) {
   const [rating,      setRating]      = useState(editLog?.rating || 0)
   const [country,     setCountry]     = useState(editLog?.beanCountry || '')
   const [roast,       setRoast]       = useState(editLog?.roastMethod || '')
+  const [customRoastInput, setCustomRoastInput] = useState('')
   const [flavors,     setFlavors]     = useState(editLog?.flavorNotes || [])
   const [customFlav,  setCustomFlav]  = useState('')
   const [farm,        setFarm]        = useState(editLog?.farm || '')
-  const [brew,        setBrew]        = useState(editLog?.brewMethod || '')
   const [comment,     setComment]     = useState(editLog?.comment || '')
   const [showDetails, setShowDetails] = useState(
-    isEdit && !!(editLog?.beanCountry || editLog?.roastMethod || editLog?.farm || editLog?.brewMethod || editLog?.flavorNotes?.length)
+    isEdit && !!(editLog?.beanCountry || editLog?.roastMethod || editLog?.farm || editLog?.flavorNotes?.length)
   )
+  const allRoastMethods = [...DEFAULT_ROAST_METHODS, ...customRoasts]
   const [suggestions, setSuggestions] = useState([])
   const [showSug,     setShowSug]     = useState(false)
 
@@ -401,6 +399,14 @@ function AddModal({ shops, onSave, onClose, editLog }) {
     if (v && !flavors.includes(v)) { setFlavors(p=>[...p,v]); setCustomFlav('') }
   }
 
+  const addCustomRoast = () => {
+    const v = customRoastInput.trim()
+    if (!v || allRoastMethods.includes(v)) return
+    onAddRoast(v)
+    setRoast(v)
+    setCustomRoastInput('')
+  }
+
   const canSave = shopName.trim() && rating > 0
   const handleSave = () => {
     if (!canSave) return
@@ -414,7 +420,6 @@ function AddModal({ shops, onSave, onClose, editLog }) {
       roastMethod:   roast,
       flavorNotes:   flavors,
       farm:          farm.trim(),
-      brewMethod:    brew,
       comment:       comment.trim(),
       createdAt:     editLog?.createdAt || Date.now(),
     }, { name: shopName.trim(), instagram: shopInsta.trim() })
@@ -514,22 +519,21 @@ function AddModal({ shops, onSave, onClose, editLog }) {
               {/* Roast method */}
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-2">精製方法</label>
-                <div className="flex flex-wrap gap-2">
-                  {ROAST_METHODS.map(m=>(
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {allRoastMethods.map(m=>(
                     <button key={m} type="button" onClick={()=>setRoast(r=>r===m?'':m)}
                       style={btn(roast===m)}>{m}</button>
                   ))}
                 </div>
-              </div>
-
-              {/* Brew method */}
-              <div>
-                <label className="block text-xs font-medium text-gray-400 mb-2">抽出方法</label>
-                <div className="flex flex-wrap gap-2">
-                  {BREW_METHODS.map(m=>(
-                    <button key={m} type="button" onClick={()=>setBrew(b=>b===m?'':m)}
-                      style={btn(brew===m)}>{m}</button>
-                  ))}
+                <div className="flex gap-2 mt-1">
+                  <input type="text" value={customRoastInput}
+                    onChange={e=>setCustomRoastInput(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addCustomRoast()}}}
+                    placeholder="その他を追加…"
+                    style={{...input,flex:1}} />
+                  <button type="button" onClick={addCustomRoast}
+                    className="px-4 rounded-xl text-sm font-medium text-white shrink-0"
+                    style={{backgroundColor:'#a07850'}}>追加</button>
                 </div>
               </div>
 
@@ -592,8 +596,9 @@ function AddModal({ shops, onSave, onClose, editLog }) {
 
 // ── App ───────────────────────────────────────────────────────
 function App() {
-  const [logs,  setLogs]  = useLocalStorage('coffee-logs',  SAMPLE_LOGS)
-  const [shops, setShops] = useLocalStorage('coffee-shops', SAMPLE_SHOPS)
+  const [logs,         setLogs]        = useLocalStorage('coffee-logs',  SAMPLE_LOGS)
+  const [shops,        setShops]       = useLocalStorage('coffee-shops', SAMPLE_SHOPS)
+  const [customRoasts, setCustomRoasts] = useLocalStorage('coffee-custom-roasts', [])
   const [query,        setQuery]        = useState('')
   const [ratingFilter, setRatingFilter] = useState(0)
   const [showAdd,  setShowAdd]  = useState(false)
@@ -689,7 +694,7 @@ function App() {
         <Icon d={ICONS.plus} size={26} />
       </button>
 
-      {showAdd && <AddModal shops={shops} onSave={handleSave} onClose={()=>{setShowAdd(false);setEditLog(null)}} editLog={editLog} />}
+      {showAdd && <AddModal shops={shops} customRoasts={customRoasts} onSave={handleSave} onAddRoast={v=>setCustomRoasts(p=>[...p,v])} onClose={()=>{setShowAdd(false);setEditLog(null)}} editLog={editLog} />}
       {detailLog && <DetailModal log={detailLog} onClose={()=>setDetailLog(null)} onEdit={handleEdit} onDelete={handleDelete} />}
     </div>
   )
